@@ -1,0 +1,1 @@
+export type Section = "overview" | "project" | "messages" | "documents" | "settings";
