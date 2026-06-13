@@ -29,21 +29,24 @@ export function useClientId(): UseClientIdResult {
     async function fetchClientId() {
       setClientLoading(true);
       setClientNotFound(false);
+      console.log('[useClientId] fetching client for firebaseUid:', user!.uid);
       try {
         const client = await getClientByFirebaseUid(user!.uid);
         if (cancelled) return;
 
         if (!client) {
           // 404 – account not yet set up in MongoDB
+          console.warn('[useClientId] client not found (404) — showing setup screen');
           setClientNotFound(true);
           setClientMongoId(null);
         } else {
           const id = client._id || client.id;
+          console.log('[useClientId] ✅ resolved clientMongoId:', id, '| full client doc:', client);
           setClientMongoId(id);
         }
       } catch (err) {
         if (cancelled) return;
-        console.error("[useClientId] Failed to fetch client:", err);
+        console.error("[useClientId] ❌ unexpected error fetching client:", err);
         // Treat unexpected errors the same as not-found to avoid crashes
         setClientNotFound(true);
         setClientMongoId(null);

@@ -25,10 +25,20 @@ export async function getClients(): Promise<Client[]> {
 }
 
 export async function getClientByFirebaseUid(firebaseUid: string): Promise<Client | null> {
-  const res = await fetch(`${API_URL}/api/clients/me/${encodeURIComponent(firebaseUid)}`, {
+  const url = `${API_URL}/api/clients/me/${encodeURIComponent(firebaseUid)}`;
+  console.log('[getClientByFirebaseUid] ▶ firebaseUid:', firebaseUid);
+  console.log('[getClientByFirebaseUid] ▶ request URL:', url);
+  const res = await fetch(url, {
     headers: getHeaders(),
   });
-  if (res.status === 404) return null;
+  console.log('[getClientByFirebaseUid] ◀ HTTP status:', res.status, res.statusText);
+  if (res.status === 404) {
+    console.warn('[getClientByFirebaseUid] ◀ 404 — client not found in MongoDB for this UID');
+    return null;
+  }
+  const cloned = res.clone();
+  const rawText = await cloned.text();
+  console.log('[getClientByFirebaseUid] ◀ raw response body:', rawText);
   return handleResponse<Client>(res);
 }
 
