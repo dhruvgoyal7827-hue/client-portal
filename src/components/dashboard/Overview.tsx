@@ -5,6 +5,7 @@ import { getProjects } from "../../lib/api";
 import { Project } from "../../lib/types";
 import { useClientId } from "../../hooks/use-client-id";
 import { toast } from "sonner";
+import ProjectTimeline from "./ProjectTimeline";
 
 function Counter({ to, suffix = "" }: { to: number; suffix?: string }) {
   const mv = useMotionValue(0);
@@ -77,40 +78,38 @@ export function Overview() {
   const { clientMongoId, clientLoading, clientNotFound } = useClientId();
   const [projects, setProjects] = useState<Project[]>([]);
   const [loading, setLoading] = useState(true);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string>("");
+  const [lastFetched, setLastFetched] = useState<Date>(new Date());
+
+  async function loadData(showLoader = false) {
+    if (!clientMongoId) return;
+    if (showLoader) setIsRefreshing(true);
+    try {
+      const clientProjects = await getProjects(clientMongoId);
+      setProjects(clientProjects);
+      setLastFetched(new Date());
+      if (clientProjects.length > 0 && !selectedProjectId) {
+        setSelectedProjectId(clientProjects[0]._id || clientProjects[0].id);
+      }
+    } catch (err: any) {
+      console.error(err);
+      toast.error("Failed to refresh project data");
+    } finally {
+      setLoading(false);
+      setIsRefreshing(false);
+    }
+  }
 
   useEffect(() => {
-    // Don't fetch until we have the client's MongoDB ID
-    if (clientLoading) return;
-    if (!clientMongoId) {
-      setLoading(false);
-      return;
-    }
-
-    let cancelled = false;
-    async function loadData() {
-      try {
-        setLoading(true);
-        const clientProjects = await getProjects(clientMongoId!);
-        if (cancelled) return;
-        setProjects(clientProjects);
-        if (clientProjects.length > 0) {
-          setSelectedProjectId(clientProjects[0]._id || clientProjects[0].id);
-        }
-      } catch (err: any) {
-        if (cancelled) return;
-        console.error(err);
-        toast.error("Failed to load project details: " + err.message);
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
-    }
+    if (clientLoading || !clientMongoId) return;
     loadData();
-    return () => { cancelled = true; };
+    const interval = setInterval(() => loadData(), 30000);
+    return () => { clearInterval(interval); };
   }, [clientMongoId, clientLoading]);
 
   // Still resolving Firebase user → MongoDB ID
-  if (clientLoading || loading) {
+  if (clientLoading || (loading && projects.length === 0)) {
     return (
       <div className="space-y-6 animate-pulse">
         <div className="rounded-2xl glass p-6 md:p-8 flex flex-col md:flex-row justify-between gap-6 bg-white/5">
@@ -159,27 +158,6 @@ export function Overview() {
   const project = projects.find(p => (p._id || p.id) === selectedProjectId) || projects[0];
   const badge = getStatusBadge(project.status);
 
-  // Timeline computation with fallbacks
-  const getTimelineState = (step: string): "done" | "current" | "pending" => {
-    if (project.timeline && project.timeline[step as keyof typeof project.timeline]) {
-      return project.timeline[step as keyof typeof project.timeline]!;
-    }
-    const statusLower = (project.status || "").toLowerCase();
-    if (step === "discovery") {
-      return statusLower === "discovery" ? "current" : "done";
-    }
-    if (step === "design") {
-      return statusLower === "design" ? "current" : (statusLower === "discovery" ? "pending" : "done");
-    }
-    if (step === "development") {
-      return (statusLower === "development" || statusLower === "in progress") ? "current" : (statusLower === "completed" || statusLower === "done" || statusLower === "launch" ? "done" : "pending");
-    }
-    if (step === "launch") {
-      return (statusLower === "completed" || statusLower === "done" || statusLower === "launch") ? "done" : "pending";
-    }
-    return "pending";
-  };
-
   const daysVal = project.daysRemaining !== undefined ? project.daysRemaining : 8;
   const daysSub = project.endDate ? `Est. delivery ${project.endDate}` : "Est. delivery June 14";
 
@@ -188,6 +166,9 @@ export function Overview() {
 
   const filesVal = project.filesShared !== undefined ? project.filesShared : 7;
   const filesSub = project.pendingFilesReview !== undefined ? `${project.pendingFilesReview} pending review` : "3 pending review";
+
+  const secondsAgo = Math.floor((Date.now() - lastFetched.getTime()) / 1000);
+  const relativeTime = secondsAgo < 60 ? `${secondsAgo}s ago` : secondsAgo < 3600 ? `${Math.floor(secondsAgo/60)}m ago` : lastFetched.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
   return (
     <div className="space-y-6">
@@ -212,68 +193,31 @@ export function Overview() {
               ))}
             </select>
           ) : (
-            <h2 className="font-syne font-bold text-[26px] leading-tight" style={{ color: "var(--text-primary)" }}>
-              {project.name || "Brand Website — Luxe Co."}
-            </h2>
-          )}
-          <div className="mt-3 flex flex-wrap items-center gap-3">
-            <span className="text-[11px] px-2.5 py-1 rounded-full font-dm font-medium" style={{ background: "rgba(124,58,237,0.15)", color: "#c4b5fd", border: "1px solid var(--border-bright)" }}>
-              {project.package || "Business Pro Package"}
-            </span>
-            <div className="flex items-center gap-1.5 text-xs font-dm" style={{ color: "var(--text-muted)" }}>
-              <Calendar size={12} /> {project.startDate || "May 28"} → {project.endDate || "Jun 14, 2026"}
+            <div className="mt-3 flex flex-col gap-2">
+              <h2 className="font-syne font-bold text-[26px] leading-tight" style={{ color: "var(--text-primary)" }}>{project.name || "Brand Website — Luxe Co."}</h2>
+              {project.description && (<p className="text-sm text-[var(--text-muted)]">{project.description}</p>)}
+              <div className="text-xs text-[var(--text-muted)]">Assigned {project.startDate ? new Date(project.startDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : "N/A"}</div>
+              <div className="flex items-center gap-1.5 text-xs font-dm" style={{ color: "var(--text-muted)" }}>
+                <Calendar size={12} /> {project.startDate || "May 28"} → {project.endDate || "Jun 14, 2026"}
+              </div>
             </div>
-          </div>
+          )}
         </div>
-        <div className="flex flex-col items-start md:items-end gap-2">
+        <div className="flex flex-col items-start md:items-end gap-2 relative">
           <div className="pulse-glow inline-flex items-center gap-2 px-4 py-2 rounded-full font-syne font-semibold text-sm" style={{ background: badge.bg, border: `1px solid ${badge.border}`, color: badge.color }}>
             <span className="w-2 h-2 rounded-full" style={{ background: badge.dot }} />
             {badge.label}
           </div>
-          <div className="text-[11px]" style={{ color: "var(--text-muted)" }}>{project.lastUpdated || "Last updated recently"}</div>
+          <div className="flex items-center gap-2 text-[11px]" style={{ color: "var(--text-muted)" }}>
+            <span>Updated {relativeTime}</span>
+            <button onClick={() => loadData(true)} className={`${isRefreshing ? "animate-spin" : ""} text-muted hover:text-violet-400 transition-colors`} aria-label="Refresh data">
+              <RefreshCw size={12} />
+            </button>
+          </div>
         </div>
       </motion.div>
 
-      {/* TIMELINE */}
-      <motion.div variants={fadeUp} initial="hidden" animate="show" custom={1} className="glass rounded-2xl p-6">
-        <div className="flex items-center justify-between overflow-x-auto">
-          {[
-            { label: "Discovery", state: getTimelineState("discovery") },
-            { label: "Design", state: getTimelineState("design") },
-            { label: "Development", state: getTimelineState("development") },
-            { label: "Launch", state: getTimelineState("launch") },
-          ].map((step, i, arr) => (
-            <div key={step.label} className="flex items-center flex-1 min-w-[120px]">
-              <div className="flex flex-col items-center gap-2">
-                <div className="relative">
-                  {step.state === "current" && (
-                    <span className="absolute inset-0 rounded-full animate-ping" style={{ background: "var(--accent-violet)", opacity: 0.4 }} />
-                  )}
-                  <div className="relative w-4 h-4 rounded-full" style={{
-                    background: step.state === "pending" ? "transparent" : "var(--accent-violet)",
-                    border: "2px solid " + (step.state === "pending" ? "var(--text-muted)" : "var(--accent-violet)"),
-                    boxShadow: step.state !== "pending" ? "0 0 12px var(--glow-violet)" : "none",
-                  }} />
-                </div>
-                <div className="font-syne text-xs" style={{ color: step.state === "pending" ? "var(--text-muted)" : "var(--text-primary)" }}>
-                  {step.label}
-                </div>
-                <div className="text-[9px] uppercase tracking-wider" style={{ color: "var(--text-muted)" }}>
-                  {step.state === "done" ? "Done" : step.state === "current" ? "In Progress" : "Pending"}
-                </div>
-              </div>
-              {i < arr.length - 1 && (
-                <div className="flex-1 h-px mx-3" style={{
-                  background: arr[i + 1].state === "pending"
-                    ? "repeating-linear-gradient(90deg, var(--text-muted) 0 4px, transparent 4px 8px)"
-                    : "linear-gradient(90deg, var(--accent-violet), var(--accent-blue))",
-                  boxShadow: arr[i + 1].state !== "pending" ? "0 0 8px var(--glow-violet)" : "none",
-                }} />
-              )}
-            </div>
-          ))}
-        </div>
-      </motion.div>
+      <ProjectTimeline status={project.status} />
 
       {/* STATS */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

@@ -16,6 +16,7 @@ export interface Project {
   status: string;
   package?: string;
   startDate?: string;
+  description?: string;
   endDate?: string;
   daysRemaining?: number;
   revisionsUsed?: number;
